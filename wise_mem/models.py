@@ -5,6 +5,7 @@ table. The `*Create` / `*Read` classes are plain Pydantic models (no table)
 used as FastAPI request/response schemas.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -54,6 +55,11 @@ class Memory(MemoryBase, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
+    # Sticky flag: flipped True the first time a *project deletion* removes one of
+    # this memory's links. Manual unlink does not set it. Never reset to False.
+    had_deleted_project: bool = Field(
+        default=False, sa_column_kwargs={"server_default": "false"}, nullable=False
+    )
     # Generated, read-only tsvector of `content` for full-text search. Postgres
     # keeps it in sync automatically; never written from Python. Excluded from
     # the API surface.
@@ -71,6 +77,10 @@ class MemoryCreate(MemoryBase):
     """Request body for creating a memory."""
 
     embedding: list[float] | None = None
+    project_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        description="Projects to link this memory to at creation (must exist).",
+    )
 
 
 class MemoryUpdate(SQLModel):
@@ -91,6 +101,7 @@ class MemoryRead(MemoryBase):
 
     id: int
     created_at: datetime
+    had_deleted_project: bool = False
 
 
 class MemorySearchHit(MemoryRead):
@@ -110,6 +121,10 @@ class MemoryTextQuery(SQLModel):
 
     query: str = Field(min_length=1, description="Natural-language search text.")
     limit: int = Field(default=5, ge=1, le=100)
+    project_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        description="If set, only return memories linked to ANY of these projects.",
+    )
 
 
 class MemoryVectorQuery(SQLModel):
@@ -117,9 +132,58 @@ class MemoryVectorQuery(SQLModel):
 
     embedding: list[float] = Field(description="Query vector to find neighbours of.")
     limit: int = Field(default=5, ge=1, le=100)
+    project_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        description="If set, only return memories linked to ANY of these projects.",
+    )
 
 
 class MemoryHybridHit(MemoryRead):
     """A hybrid search result: a memory plus its fused RRF score (higher = better)."""
 
     score: float
+
+
+class MemoryProjectLink(SQLModel, table=True):
+    """Association table for the memory<->project many-to-many.
+
+    Both FKs cascade on delete, so removing a memory or a project drops its
+    link rows automatically.
+    """
+
+    __tablename__ = "memory_project"
+
+    memory_id: int | None = Field(
+        default=None, foreign_key="memory.id", primary_key=True, ondelete="CASCADE"
+    )
+    project_id: uuid.UUID | None = Field(
+        default=None, foreign_key="project.id", primary_key=True, ondelete="CASCADE"
+    )
+
+
+class ProjectBase(SQLModel):
+    """Fields shared between the project table and its create/read schemas."""
+
+    name: str = Field(min_length=1, description="Human-readable project name.")
+    description: str | None = Field(default=None, description="Optional description.")
+
+
+class Project(ProjectBase, table=True):
+    """A project; its UUID is the key memories are tied to."""
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+
+
+class ProjectCreate(ProjectBase):
+    """Request body for creating a project."""
+
+
+class ProjectRead(ProjectBase):
+    """Response model for a project."""
+
+    id: uuid.UUID
+    created_at: datetime
