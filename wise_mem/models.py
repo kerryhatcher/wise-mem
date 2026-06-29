@@ -117,3 +117,9 @@ class MemoryVectorQuery(SQLModel):
 
     embedding: list[float] = Field(description="Query vector to find neighbours of.")
     limit: int = Field(default=5, ge=1, le=100)
+
+
+class MemoryHybridHit(MemoryRead):
+    """A hybrid search result: a memory plus its fused RRF score (higher = better)."""
+
+    score: float

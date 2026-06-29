@@ -88,3 +88,38 @@ async def search_memories_fulltext(
     )
     rows = (await session.exec(stmt)).all()
     return [(row[0], row[1]) for row in rows]
+
+
+async def search_memories_hybrid(
+    session: AsyncSession,
+    *,
+    embedding: list[float],
+    text: str,
+    limit: int = 5,
+    k: int = 60,
+    pool: int = 50,
+) -> list[tuple[Memory, float]]:
+    """Combine vector and full-text results via Reciprocal Rank Fusion (RRF).
+
+    Runs both the semantic (cosine) and full-text candidate searches, each
+    capped at `pool` rows, then fuses them: a memory appearing at 1-based rank
+    `r` in a list contributes `1 / (k + r)` to its fused score. Scores are
+    summed across both lists, so a memory ranking well in either (or both)
+    rises. Results are de-duplicated by memory id and the top `limit` are
+    returned as `(Memory, fused_score)` tuples sorted by score descending.
+
+    `k` damps the influence of lower ranks (the standard RRF constant is 60).
+    """
+    vector_rows = await search_memories(session, embedding, limit=pool)
+    fulltext_rows = await search_memories_fulltext(session, text, limit=pool)
+
+    scores: dict[int, float] = {}
+    memories: dict[int, Memory] = {}
+    for rows in (vector_rows, fulltext_rows):
+        for rank_pos, (memory, _) in enumerate(rows, start=1):
+            mem_id = memory.id
+            scores[mem_id] = scores.get(mem_id, 0.0) + 1.0 / (k + rank_pos)
+            memories.setdefault(mem_id, memory)
+
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    return [(memories[mem_id], score) for mem_id, score in ranked[:limit]]

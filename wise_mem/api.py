@@ -11,6 +11,7 @@ from wise_mem.embeddings import EmbeddingError, embed_document, embed_query
 from wise_mem.models import (
     MemoryCreate,
     MemoryFullTextHit,
+    MemoryHybridHit,
     MemoryRead,
     MemorySearchHit,
     MemoryTextQuery,
@@ -127,4 +128,24 @@ async def search_fulltext(
     return [
         MemoryFullTextHit(**MemoryRead.model_validate(m).model_dump(), rank=rank)
         for m, rank in rows
+    ]
+
+
+@app.post("/memories/search/hybrid", response_model=list[MemoryHybridHit])
+async def search_hybrid(
+    query: MemoryTextQuery, session: AsyncSession = Depends(get_session)
+) -> list[MemoryHybridHit]:
+    """Hybrid search: fuse semantic and full-text results via RRF."""
+    try:
+        vector = await embed_query(query.query)
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    rows = await crud.search_memories_hybrid(
+        session, embedding=vector, text=query.query, limit=query.limit
+    )
+    return [
+        MemoryHybridHit(**MemoryRead.model_validate(m).model_dump(), score=score)
+        for m, score in rows
     ]
