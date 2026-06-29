@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, Computed, DateTime, func
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlmodel import Field, SQLModel
 
 # Dimensionality of stored embeddings. Fixed in the column type, so changing it
@@ -54,6 +54,17 @@ class Memory(MemoryBase, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
+    # Generated, read-only tsvector of `content` for full-text search. Postgres
+    # keeps it in sync automatically; never written from Python. Excluded from
+    # the API surface.
+    content_tsv: Any | None = Field(
+        default=None,
+        exclude=True,
+        sa_column=Column(
+            TSVECTOR,
+            Computed("to_tsvector('english', content)", persisted=True),
+        ),
+    )
 
 
 class MemoryCreate(MemoryBase):
@@ -83,13 +94,26 @@ class MemoryRead(MemoryBase):
 
 
 class MemorySearchHit(MemoryRead):
-    """A search result: a memory plus its cosine distance to the query vector."""
+    """A semantic search result: a memory plus its cosine distance (0 = closest)."""
 
     distance: float
 
 
-class MemorySearchQuery(SQLModel):
-    """Request body for a similarity search."""
+class MemoryFullTextHit(MemoryRead):
+    """A full-text search result: a memory plus its ts_rank score (higher = better)."""
+
+    rank: float
+
+
+class MemoryTextQuery(SQLModel):
+    """Request body for text-driven search (semantic or full-text)."""
+
+    query: str = Field(min_length=1, description="Natural-language search text.")
+    limit: int = Field(default=5, ge=1, le=100)
+
+
+class MemoryVectorQuery(SQLModel):
+    """Request body for raw-vector similarity search."""
 
     embedding: list[float] = Field(description="Query vector to find neighbours of.")
     limit: int = Field(default=5, ge=1, le=100)

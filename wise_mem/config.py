@@ -22,5 +22,14 @@ class Settings(BaseSettings):
         description="Log all SQL emitted by the engine (useful while developing).",
     )
 
+    ollama_host: str = Field(
+        default="http://localhost:11434",
+        description="Base URL of the Ollama server used for embeddings.",
+    )
+    embedding_model: str = Field(
+        default="nomic-embed-text",
+        description="Ollama model name used to embed memory text (768-dim).",
+    )
+
 
 settings = Settings()  # type: ignore[call-arg]  # values come from the environment

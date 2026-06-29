@@ -4,6 +4,7 @@ Routes call these; they own all the SQL. Keeping them framework-free means the
 Typer CLI can reuse them without importing FastAPI.
 """
 
+from sqlalchemy import func
 from sqlmodel import delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -62,6 +63,27 @@ async def search_memories(
         select(Memory, distance)
         .where(Memory.embedding.is_not(None))
         .order_by(distance)
+        .limit(limit)
+    )
+    rows = (await session.exec(stmt)).all()
+    return [(row[0], row[1]) for row in rows]
+
+
+async def search_memories_fulltext(
+    session: AsyncSession, query: str, *, limit: int = 5
+) -> list[tuple[Memory, float]]:
+    """Full-text keyword search over `content`, ranked by relevance.
+
+    Uses `websearch_to_tsquery` so the query accepts human syntax (quoted
+    phrases, `or`, `-exclude`). Matches against the generated `content_tsv`
+    column, which is backed by a GIN index.
+    """
+    tsquery = func.websearch_to_tsquery("english", query)
+    rank = func.ts_rank(Memory.content_tsv, tsquery).label("rank")
+    stmt = (
+        select(Memory, rank)
+        .where(Memory.content_tsv.op("@@")(tsquery))
+        .order_by(rank.desc())
         .limit(limit)
     )
     rows = (await session.exec(stmt)).all()

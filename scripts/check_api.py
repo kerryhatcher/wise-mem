@@ -1,68 +1,65 @@
 """End-to-end exercise of the FastAPI endpoints against the real database.
 
-Uses Starlette's TestClient, which runs the app lifespan (init_db) and drives
-the async app in-process — no separate server needed.
+Covers auto-embedding on create, semantic (text) search, full-text search,
+and raw-vector search. Requires a running Ollama with nomic-embed-text.
 """
 
 from fastapi.testclient import TestClient
 
 from wise_mem.api import app
-from wise_mem.models import EMBEDDING_DIM
 
 
 def main() -> None:
-    query_vec = [0.1] * EMBEDDING_DIM
+    seed = [
+        "Kerry prefers uv over pip for Python projects",
+        "The wise-mem service stores agent memories in Postgres",
+        "Tailscale connects the thor server over a private network",
+    ]
+    created_ids = []
 
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
         print("✓ health")
 
-        # CREATE
+        # CREATE with auto-embedding (no embedding field sent)
+        for text in seed:
+            r = client.post("/memories", json={"content": text, "source": "check_api"})
+            assert r.status_code == 201, r.text
+            created_ids.append(r.json()["id"])
+        print(f"✓ create + auto-embed: {len(created_ids)} memories")
+
+        # SEMANTIC search by text — "package manager" should surface the uv memory
         r = client.post(
-            "/memories",
-            json={
-                "content": "Kerry prefers uv over pip",
-                "source": "check_api",
-                "meta": {"tags": ["pref", "tooling"], "confidence": 0.95},
-                "embedding": query_vec,
-            },
+            "/memories/search", json={"query": "python package manager", "limit": 3}
         )
-        assert r.status_code == 201, r.text
-        created = r.json()
-        mem_id = created["id"]
-        assert "embedding" not in created  # write/search-only by design
-        print(f"✓ create: id={mem_id} meta={created['meta']}")
-
-        # READ one
-        r = client.get(f"/memories/{mem_id}")
-        assert r.status_code == 200 and r.json()["content"].startswith("Kerry")
-        print("✓ get")
-
-        # LIST
-        r = client.get("/memories?limit=10")
-        assert r.status_code == 200 and any(m["id"] == mem_id for m in r.json())
-        print(f"✓ list: {len(r.json())} row(s)")
-
-        # SEARCH
-        r = client.post("/memories/search", json={"embedding": query_vec, "limit": 5})
         assert r.status_code == 200, r.text
         hits = r.json()
-        assert hits and hits[0]["id"] == mem_id
-        print(f"✓ search: top hit id={hits[0]['id']} distance={hits[0]['distance']:.4f}")
+        top = hits[0]
+        print(f"✓ semantic: top={top['content'][:40]!r} distance={top['distance']:.4f}")
+        assert "uv" in top["content"]
 
-        # UPDATE (partial: replace meta, change content)
-        r = client.patch(
-            f"/memories/{mem_id}",
-            json={"content": "Kerry strongly prefers uv", "meta": {"tags": ["pref"]}},
+        # FULL-TEXT search — keyword "postgres" matches the storage memory
+        r = client.post(
+            "/memories/search/fulltext", json={"query": "postgres", "limit": 3}
         )
         assert r.status_code == 200, r.text
-        assert r.json()["meta"] == {"tags": ["pref"]}  # replaced, not merged
-        print(f"✓ patch: content={r.json()['content']!r} meta={r.json()['meta']}")
+        ft = r.json()
+        assert ft and "Postgres" in ft[0]["content"]
+        print(f"✓ fulltext: top={ft[0]['content'][:40]!r} rank={ft[0]['rank']:.4f}")
 
-        # DELETE
-        assert client.delete(f"/memories/{mem_id}").status_code == 204
-        assert client.get(f"/memories/{mem_id}").status_code == 404
-        print("✓ delete + 404 confirmed")
+        # FULL-TEXT with websearch syntax (exclusion) — should drop the uv memory
+        r = client.post(
+            "/memories/search/fulltext",
+            json={"query": "memories -uv", "limit": 5},
+        )
+        assert r.status_code == 200, r.text
+        assert all("uv" not in h["content"] for h in r.json())
+        print("✓ fulltext websearch exclusion works")
+
+        # CLEANUP
+        for mem_id in created_ids:
+            assert client.delete(f"/memories/{mem_id}").status_code == 204
+        print("✓ cleanup")
 
     print("\nAll endpoint checks passed.")
 

@@ -58,3 +58,10 @@ async def init_db() -> None:
                 "ON memory USING hnsw (embedding vector_cosine_ops)"
             )
         )
+        # GIN index backing full-text search over the generated content_tsv column.
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_memory_content_tsv "
+                "ON memory USING gin (content_tsv)"
+            )
+        )
