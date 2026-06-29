@@ -76,6 +76,16 @@ async def update_memory(
     memory = await crud.get_memory(session, memory_id)
     if memory is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Memory not found")
+    # Re-embed when the content changes, so the stored vector never goes stale.
+    # Skip if the caller explicitly supplied their own embedding in this request.
+    fields_set = data.model_fields_set
+    if "content" in fields_set and "embedding" not in fields_set:
+        try:
+            data.embedding = await embed_document(data.content)
+        except EmbeddingError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
     return await crud.update_memory(session, memory, data)
 
 
