@@ -62,9 +62,34 @@ class MemoryCreate(MemoryBase):
     embedding: list[float] | None = None
 
 
+class MemoryUpdate(SQLModel):
+    """Partial update — every field optional; unset fields are left unchanged."""
+
+    content: str | None = None
+    source: str | None = None
+    meta: dict[str, Any] | None = None
+    embedding: list[float] | None = None
+
+
 class MemoryRead(MemoryBase):
-    """Response model for returning a memory."""
+    """Response model for returning a memory.
+
+    Deliberately omits the raw `embedding` vector to keep payloads lean;
+    embeddings are write/search-only via the API.
+    """
 
     id: int
-    embedding: list[float] | None = None
     created_at: datetime
+
+
+class MemorySearchHit(MemoryRead):
+    """A search result: a memory plus its cosine distance to the query vector."""
+
+    distance: float
+
+
+class MemorySearchQuery(SQLModel):
+    """Request body for a similarity search."""
+
+    embedding: list[float] = Field(description="Query vector to find neighbours of.")
+    limit: int = Field(default=5, ge=1, le=100)
