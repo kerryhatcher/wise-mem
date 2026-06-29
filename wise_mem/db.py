@@ -42,7 +42,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-def _alembic_config() -> Config:
+def alembic_config() -> Config:
     """Alembic config with absolute paths, so it works from any CWD."""
     cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_PROJECT_ROOT / "alembic"))
@@ -61,4 +61,4 @@ async def run_migrations() -> None:
     lifespan). For multi-instance deployments, prefer running
     `alembic upgrade head` as a dedicated deploy step instead of on startup.
     """
-    await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
+    await asyncio.to_thread(command.upgrade, alembic_config(), "head")

@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from wise_mem import crud
+from wise_mem import crud, service
 from wise_mem.db import get_session, run_migrations
-from wise_mem.embeddings import EmbeddingError, embed_document, embed_query
+from wise_mem.embeddings import EmbeddingError
 from wise_mem.models import (
     MemoryCreate,
     MemoryFullTextHit,
@@ -42,23 +42,14 @@ async def health() -> dict[str, str]:
 async def create_memory(
     data: MemoryCreate, session: AsyncSession = Depends(get_session)
 ) -> MemoryRead:
-    # Validate project links up front (cheap) before embedding (a network call).
-    if data.project_ids:
-        found = await crud.existing_project_ids(session, data.project_ids)
-        missing = [str(p) for p in data.project_ids if p not in found]
-        if missing:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, detail=f"Unknown project(s): {missing}"
-            )
-    # Auto-embed the content unless the caller supplied a vector themselves.
-    if data.embedding is None:
-        try:
-            data.embedding = await embed_document(data.content)
-        except EmbeddingError as exc:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
-    return await crud.create_memory(session, data)
+    try:
+        return await service.create_memory(session, data)
+    except service.UnknownProjectsError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 
 @app.get("/memories", response_model=list[MemoryRead])
@@ -92,17 +83,12 @@ async def update_memory(
     memory = await crud.get_memory(session, memory_id)
     if memory is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Memory not found")
-    # Re-embed when the content changes, so the stored vector never goes stale.
-    # Skip if the caller explicitly supplied their own embedding in this request.
-    fields_set = data.model_fields_set
-    if "content" in fields_set and "embedding" not in fields_set:
-        try:
-            data.embedding = await embed_document(data.content)
-        except EmbeddingError as exc:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
-    return await crud.update_memory(session, memory, data)
+    try:
+        return await service.update_memory(session, memory, data)
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 
 @app.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -127,14 +113,17 @@ async def search_semantic(
 ) -> list[MemorySearchHit]:
     """Semantic search: embed the query text, then cosine-nearest neighbours."""
     try:
-        vector = await embed_query(query.query)
+        rows = await service.search(
+            session,
+            mode="semantic",
+            query=query.query,
+            limit=query.limit,
+            project_ids=query.project_ids,
+        )
     except EmbeddingError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
-    rows = await crud.search_memories(
-        session, vector, limit=query.limit, project_ids=query.project_ids
-    )
     return _semantic_hits(rows)
 
 
@@ -143,8 +132,12 @@ async def search_vector(
     query: MemoryVectorQuery, session: AsyncSession = Depends(get_session)
 ) -> list[MemorySearchHit]:
     """Similarity search from a pre-computed query vector."""
-    rows = await crud.search_memories(
-        session, query.embedding, limit=query.limit, project_ids=query.project_ids
+    rows = await service.search(
+        session,
+        mode="vector",
+        embedding=query.embedding,
+        limit=query.limit,
+        project_ids=query.project_ids,
     )
     return _semantic_hits(rows)
 
@@ -154,8 +147,12 @@ async def search_fulltext(
     query: MemoryTextQuery, session: AsyncSession = Depends(get_session)
 ) -> list[MemoryFullTextHit]:
     """Full-text keyword search over content, ranked by ts_rank."""
-    rows = await crud.search_memories_fulltext(
-        session, query.query, limit=query.limit, project_ids=query.project_ids
+    rows = await service.search(
+        session,
+        mode="fulltext",
+        query=query.query,
+        limit=query.limit,
+        project_ids=query.project_ids,
     )
     return [
         MemoryFullTextHit(**MemoryRead.model_validate(m).model_dump(), rank=rank)
@@ -169,18 +166,17 @@ async def search_hybrid(
 ) -> list[MemoryHybridHit]:
     """Hybrid search: fuse semantic and full-text results via RRF."""
     try:
-        vector = await embed_query(query.query)
+        rows = await service.search(
+            session,
+            mode="hybrid",
+            query=query.query,
+            limit=query.limit,
+            project_ids=query.project_ids,
+        )
     except EmbeddingError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
-    rows = await crud.search_memories_hybrid(
-        session,
-        embedding=vector,
-        text=query.query,
-        limit=query.limit,
-        project_ids=query.project_ids,
-    )
     return [
         MemoryHybridHit(**MemoryRead.model_validate(m).model_dump(), score=score)
         for m, score in rows

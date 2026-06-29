@@ -15,6 +15,9 @@ dependencies = [
     "typer[all]>=0.26.8",
 ]
 
+[project.scripts]
+wise-mem = "wise_mem.cli:app"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
