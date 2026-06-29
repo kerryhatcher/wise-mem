@@ -8,6 +8,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi[all]>=0.138.2",
     "loguru>=0.7.3",
+    "pgvector>=0.4.2",
     "pydantic-settings>=2.14.2",
     "sqlmodel>=0.0.39",
     "typer[all]>=0.26.8",

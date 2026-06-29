@@ -6,6 +6,7 @@ SQLModel sits on top of SQLAlchemy: we use SQLAlchemy's async engine and
 
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -47,4 +48,13 @@ async def init_db() -> None:
     from wise_mem import models  # noqa: F401
 
     async with engine.begin() as conn:
+        # pgvector must exist before a table with a vector column can be created.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(SQLModel.metadata.create_all)
+        # HNSW index for fast approximate nearest-neighbour search by cosine distance.
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_memory_embedding "
+                "ON memory USING hnsw (embedding vector_cosine_ops)"
+            )
+        )
