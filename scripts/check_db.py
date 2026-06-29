@@ -5,13 +5,13 @@ import asyncio
 
 from sqlmodel import delete, select
 
-from wise_mem.db import async_session_factory, engine, init_db
+from wise_mem.db import async_session_factory, engine, run_migrations
 from wise_mem.models import EMBEDDING_DIM, Memory
 
 
 async def main() -> None:
-    await init_db()
-    print("✓ init_db: extension + table + HNSW index ready")
+    await run_migrations()
+    print("✓ migrations: schema at head (table + HNSW + GIN)")
 
     # A toy 768-dim embedding (all 0.1) just to prove the round-trip.
     vec = [0.1] * EMBEDDING_DIM

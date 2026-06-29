@@ -4,14 +4,19 @@ SQLModel sits on top of SQLAlchemy: we use SQLAlchemy's async engine and
 `AsyncSession`, but query with SQLModel's `select()` and ORM models.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
-from sqlalchemy import text
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from wise_mem.config import settings
+
+# Project root holds alembic.ini and the alembic/ script directory.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # A single engine per process owns the connection pool. Created once at import.
 engine = create_async_engine(settings.database_url, echo=settings.db_echo)
@@ -37,31 +42,23 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def init_db() -> None:
-    """Create all tables declared on SQLModel metadata.
+def _alembic_config() -> Config:
+    """Alembic config with absolute paths, so it works from any CWD."""
+    cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_PROJECT_ROOT / "alembic"))
+    return cfg
 
-    Fine for early development; switch to Alembic migrations once the schema
-    needs to evolve without dropping data.
+
+async def run_migrations() -> None:
+    """Bring the database schema up to head via Alembic.
+
+    Alembic is the single source of truth for the schema. The first migration
+    requires the `vector` extension to already exist (a superuser one-time step),
+    after which its `CREATE EXTENSION IF NOT EXISTS` is a harmless no-op.
+
+    Run in a worker thread: Alembic's async env.py calls `asyncio.run`, which
+    cannot be nested inside an already-running event loop (e.g. the FastAPI
+    lifespan). For multi-instance deployments, prefer running
+    `alembic upgrade head` as a dedicated deploy step instead of on startup.
     """
-    # Import models so their tables are registered on SQLModel.metadata before
-    # create_all runs.
-    from wise_mem import models  # noqa: F401
-
-    async with engine.begin() as conn:
-        # pgvector must exist before a table with a vector column can be created.
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(SQLModel.metadata.create_all)
-        # HNSW index for fast approximate nearest-neighbour search by cosine distance.
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_memory_embedding "
-                "ON memory USING hnsw (embedding vector_cosine_ops)"
-            )
-        )
-        # GIN index backing full-text search over the generated content_tsv column.
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_memory_content_tsv "
-                "ON memory USING gin (content_tsv)"
-            )
-        )
+    await asyncio.to_thread(command.upgrade, _alembic_config(), "head")

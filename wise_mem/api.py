@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from wise_mem import crud
-from wise_mem.db import get_session, init_db
+from wise_mem.db import get_session, run_migrations
 from wise_mem.embeddings import EmbeddingError, embed_document, embed_query
 from wise_mem.models import (
     MemoryCreate,
@@ -22,8 +22,8 @@ from wise_mem.models import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure extension, table, and index exist before serving requests.
-    await init_db()
+    # Apply Alembic migrations to head before serving requests.
+    await run_migrations()
     yield
 
 

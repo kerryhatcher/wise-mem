@@ -21,7 +21,7 @@ import httpx
 
 from wise_mem import crud
 from wise_mem.api import app
-from wise_mem.db import async_session_factory, init_db
+from wise_mem.db import async_session_factory, run_migrations
 from wise_mem.embeddings import embed_query
 from wise_mem.models import EMBEDDING_DIM, Memory
 
@@ -46,7 +46,7 @@ async def fetch_embedding(memory_id: int) -> list[float]:
 
 
 async def run() -> None:
-    await init_db()  # ensure tables/indexes exist (lifespan isn't triggered here)
+    await run_migrations()  # apply schema (ASGITransport doesn't trigger lifespan)
     transport = httpx.ASGITransport(app=app)
     reembed_id = None
     explicit_id = None
