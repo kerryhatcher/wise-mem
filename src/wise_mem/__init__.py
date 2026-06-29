@@ -1,5 +1,5 @@
-from loguru import logger
 import typer
+from loguru import logger
 
 from .api import HealthResponse
 
