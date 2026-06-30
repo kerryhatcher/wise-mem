@@ -30,8 +30,14 @@ it actually runs. There are no mocks for the database or the embedder.
 
 The tests never touch your real database: `conftest.py` reads `DATABASE_URL`
 (from the environment or `.env`) and **rewrites the database name** to
-`wisemem_test`. You must create that database and enable `pgvector` in it once,
-as a superuser:
+`wisemem_test`, which must exist with `pgvector` enabled.
+
+**Easiest (local containers).** `cp .env.example .env` then `just up` — the
+Postgres container ships pgvector ≥ 0.8 and its init script creates `wisemem_test`
+with the extension automatically. Nothing else to do. (Still needs Ollama on the
+host — see prerequisite 3.)
+
+**Against a non-container Postgres**, provision the test DB once as a superuser:
 
 ```bash
 just test-db

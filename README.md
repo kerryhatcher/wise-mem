@@ -51,34 +51,48 @@ exceptions. Both `api.py` and `cli.py` call `service.py`, so they cannot drift.
 
 ## Prerequisites
 
-- **PostgreSQL** with the **pgvector** extension package installed on the server
-  (e.g. `postgresql-16-pgvector`). A login role for the app must exist, and a
-  superuser must run `CREATE EXTENSION vector` once per database.
-- **Ollama** running with the embedding model: `ollama pull nomic-embed-text`.
 - **uv** for dependency management.
+- **Ollama** running with the embedding model: `ollama pull nomic-embed-text`.
+- **PostgreSQL** with **pgvector** — either the local container stack below
+  (recommended) or an existing server with the `pgvector` package installed and
+  `CREATE EXTENSION vector` run once per database by a superuser.
+- **Docker** (only for the container stack).
 
 ## Setup
 
-1. Install dependencies:
+Install dependencies first:
 
-   ```bash
-   just sync          # uv sync
-   ```
+```bash
+just sync          # uv sync
+```
 
-2. Create a `.env` (gitignored) — note the `+asyncpg` driver in the DSN:
+**Option A — local container stack (recommended).** Brings up Postgres
+(pgvector ≥ 0.8) and Memgraph; the Postgres init script creates both the app DB
+and `wisemem_test` with the extension:
 
-   ```dotenv
-   DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/wise-mem
-   OLLAMA_HOST=http://localhost:11434
-   EMBEDDING_MODEL=nomic-embed-text
-   # DB_ECHO=false
-   ```
+```bash
+cp .env.example .env     # defaults point at the containers (localhost:5433)
+just up                  # start postgres + memgraph (docker compose up -d)
+just migrate             # apply the schema (uv run alembic upgrade head)
+```
 
-3. Apply the schema:
+`just down` stops them (data kept); `just reset` wipes the volumes. The Memgraph
+container is for the Phase 2 graph projection (see `docs/roadmap.md`); it's
+started now so it's ready, but nothing reads it yet.
 
-   ```bash
-   just migrate       # uv run alembic upgrade head
-   ```
+**Option B — existing Postgres.** Create a `.env` (gitignored) — note the
+`+asyncpg` driver — pointing at your server, then migrate:
+
+```dotenv
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/wise-mem
+OLLAMA_HOST=http://localhost:11434
+EMBEDDING_MODEL=nomic-embed-text
+# DB_ECHO=false
+```
+
+```bash
+just migrate       # uv run alembic upgrade head
+```
 
 The API also applies migrations on startup, so a fresh database self-migrates
 the first time it serves a request.

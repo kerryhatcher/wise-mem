@@ -89,7 +89,9 @@ Guidance for AI agents (and humans) working on this repo. See
 - `just test` runs pytest against a dedicated **`wisemem_test`** database
   (`conftest.py` rewrites the db name in `DATABASE_URL`) — tests never touch the
   real store. Requires Postgres+pgvector and a running Ollama.
-- First-time bootstrap: `just test-db` (superuser creates the DB + extension).
+- First-time bootstrap: `just up` (the container stack creates `wisemem_test` +
+  the extension automatically), or `just test-db` against a non-container Postgres.
+  The local dev stack (Postgres + Memgraph) is `compose.yaml`; see `.env.example`.
 - Tests are integration-first (real DB + real embedder); add coverage there
   rather than mocking the database.
 

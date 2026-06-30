@@ -1,0 +1,77 @@
+# Local dev stack for wise-mem: Postgres (with pgvector) + Memgraph.
+#
+# Used while the primary server (thor) is offline. The app and tooling run on the
+# HOST (`uv run` / `just`) and connect to these containers on localhost.
+#
+#   just up      # start postgres + memgraph (detached)
+#   just down    # stop (keep data)
+#   just reset   # stop and WIPE volumes (fresh databases)
+#   just logs    # tail logs
+#
+# Optional Memgraph Lab UI (opt-in):
+#   docker compose --profile lab up -d        # then open http://localhost:3000
+#
+# Connection (matches .env.example):
+#   Postgres  postgresql+asyncpg://wise-mem:wise-mem-dev@localhost:5433/wise-mem
+#   Memgraph  bolt://localhost:7687   (wired up in Phase 2)
+#
+# Host port 5433 (not 5432) avoids clashing with a native Postgres on the box.
+# Ports bind to 127.0.0.1 only — not exposed to the network.
+
+name: wise-mem
+
+services:
+  postgres:
+    # Postgres 17 + pgvector >= 0.8 (gives HNSW iterative scan for filtered ANN).
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: wise-mem
+      POSTGRES_PASSWORD: wise-mem-dev
+      POSTGRES_DB: wise-mem
+    ports:
+      - "127.0.0.1:5433:5432"   # host 5433 -> container 5432 (avoids native PG on 5432)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once on first init: enables pgvector + creates the wisemem_test DB.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wise-mem -d wise-mem"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  memgraph:
+    # MAGE image bundles the graph algorithms used in Phase 2 (GraphRAG, pathfinding).
+    image: memgraph/memgraph-mage:latest
+    command: ["--telemetry-enabled=false", "--log-level=WARNING"]
+    ports:
+      - "127.0.0.1:7687:7687"   # Bolt protocol (drivers connect here)
+      - "127.0.0.1:7444:7444"   # monitoring / log stream
+    volumes:
+      - memgraph_data:/var/lib/memgraph
+      - memgraph_log:/var/log/memgraph
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'RETURN 0;' | mgconsole || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # Optional web UI for exploring the Memgraph graph. Opt-in via the `lab` profile.
+  lab:
+    image: memgraph/lab:latest
+    profiles: ["lab"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      QUICK_CONNECT_MG_HOST: memgraph
+      QUICK_CONNECT_MG_PORT: "7687"
+    depends_on:
+      - memgraph
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  memgraph_data:
+  memgraph_log:
