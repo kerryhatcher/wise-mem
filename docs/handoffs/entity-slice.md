@@ -93,14 +93,11 @@ Work these with the user; my recommendations are starting points, not mandates.
    table, `kind ∈ {person, organization, tool, website, property}`, shared columns +
    `attributes JSONB` for the type-specific tail. Add `CHECK`/validation for required
    per-kind fields. Promote a subtype to its own table only if it later earns it.
-5. **pgvector ≥ 0.8 verification.** The unified search may filter HNSW by type/project;
-   pre-0.8 HNSW under-returns under a selective filter (needs iterative scan). **The
-   remote DB was unreachable during planning — verify the server extension version
-   before relying on filtered ANN.** Check with:
-   `SELECT extversion FROM pg_extension WHERE extname='vector';` If < 0.8, plan an
-   upgrade or design around it (e.g. per-type tables already avoid a type-discriminator
-   filter; a project filter is an `IN`-subquery, so confirm whether under-return bites
-   in practice).
+5. **pgvector ≥ 0.8 — RESOLVED.** The local container stack (`just up`) ships
+   **pgvector 0.8.3**, so HNSW iterative scan is available for filtered ANN. (Confirm
+   with `SELECT extversion FROM pg_extension WHERE extname='vector';` if you point at a
+   different server.) Note: the per-type-tables search spine largely sidesteps a
+   type-discriminator filter anyway; the project filter is an `IN`-subquery.
 
 ## 6. Intended Entity shape (research-backed starting sketch)
 

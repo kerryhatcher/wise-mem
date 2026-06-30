@@ -69,8 +69,9 @@ These are settled (2026-06-29) and should not be re-litigated without cause:
 - **Entity subtype storage** — single-table-inheritance (`kind` + typed columns +
   JSONB tail) vs. promoting a subtype to its own table; default to STI + JSONB,
   promote only when a subtype earns it.
-- **pgvector server version** — confirm **≥ 0.8** (iterative scan) so a `type`/
-  project filter on HNSW does not under-return; otherwise plan an upgrade.
+- ~~**pgvector server version** — confirm **≥ 0.8** (iterative scan).~~ **Resolved:**
+  the local container stack (`compose.yaml`) ships **pgvector 0.8.3**, so HNSW
+  iterative scan is available for filtered ANN.
 - **Phase 2 refresh strategy** — batch schedule vs. after-write rebuild vs. on-demand.
 
 ---
