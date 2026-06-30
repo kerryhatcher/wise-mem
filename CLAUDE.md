@@ -4,6 +4,14 @@ Guidance for AI agents (and humans) working on this repo. See
 [`README.md`](./README.md) for what the project is and how to run it, and
 [`tests/README.md`](./tests/README.md) for the test setup.
 
+> **In-flight major work — read before starting.** wise-mem is evolving into a
+> typed knowledge graph with unified search and (later) a graph projection. The
+> resumable plan is [`docs/roadmap.md`](./docs/roadmap.md); the storage
+> architecture decision (Postgres source-of-truth + Memgraph derived graph) is
+> [ADR 0001](./docs/adr/0001-postgres-source-of-truth-memgraph-derived-graph.md).
+> Per-slice specs live in `docs/superpowers/specs/`. Start the next slice from the
+> roadmap's status table.
+
 ## Tooling
 
 - **Python: always `uv`.** Run code with `uv run ...`; never bare
