@@ -11,6 +11,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from wise_mem.config import settings
@@ -19,7 +20,11 @@ from wise_mem.config import settings
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # A single engine per process owns the connection pool. Created once at import.
-engine = create_async_engine(settings.database_url, echo=settings.db_echo)
+# NullPool (tests) avoids reusing a connection bound to a closed event loop.
+_engine_kwargs: dict = {"echo": settings.db_echo}
+if settings.db_nullpool:
+    _engine_kwargs["poolclass"] = NullPool
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 # Session factory. expire_on_commit=False keeps attributes usable after commit,
 # which matters for async code and for returning ORM objects from FastAPI routes.

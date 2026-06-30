@@ -21,6 +21,11 @@ class Settings(BaseSettings):
         default=False,
         description="Log all SQL emitted by the engine (useful while developing).",
     )
+    db_nullpool: bool = Field(
+        default=False,
+        description="Use a non-pooling engine (NullPool). Set in tests so "
+        "connections aren't reused across event loops.",
+    )
 
     ollama_host: str = Field(
         default="http://localhost:11434",
