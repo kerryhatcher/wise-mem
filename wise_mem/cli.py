@@ -2,8 +2,9 @@
 
 Commands go through the same `service`/`crud` layer the API uses, so behaviour
 (auto-embedding, re-embedding, project validation, search filters) is identical.
-Structured results are emitted as JSON for easy scripting; actions print a short
-confirmation. Schema is managed by Alembic (`wise-mem db upgrade`).
+Output is human-friendly tables by default; pass the global ``--json`` flag for
+stable machine-readable output in scripts. Schema is managed by Alembic
+(``wise-mem db upgrade``).
 """
 
 import asyncio
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
 from wise_mem import crud, service
 from wise_mem.db import alembic_config, async_session_factory, engine, run_migrations
@@ -35,6 +38,9 @@ app.add_typer(memory_app, name="memory")
 app.add_typer(project_app, name="project")
 app.add_typer(db_app, name="db")
 
+console = Console()
+_state = {"json": False}
+
 _SCORE_KEY = {
     "semantic": "distance",
     "vector": "distance",
@@ -43,12 +49,17 @@ _SCORE_KEY = {
 }
 
 
-def _run(coro: Any) -> Any:
-    """Run an async coroutine, disposing the engine's pool afterward.
+@app.callback()
+def _main(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit JSON instead of tables (for scripts/automation)."
+    ),
+) -> None:
+    _state["json"] = json_output
 
-    Disposal matters when several commands run in one process (tests): it stops
-    a pooled asyncpg connection bound to one event loop being reused by the next.
-    """
+
+def _run(coro: Any) -> Any:
+    """Run an async coroutine, disposing the engine's pool afterward."""
 
     async def _wrapped() -> Any:
         try:
@@ -72,8 +83,68 @@ def _project_json(project: Project) -> dict[str, Any]:
     return ProjectRead.model_validate(project).model_dump(mode="json")
 
 
-def _emit(data: Any) -> None:
+def _emit_json(data: Any) -> None:
     typer.echo(json.dumps(data, indent=2))
+
+
+def _truncate(text: str, n: int = 60) -> str:
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _fmt_dt(value: str | None) -> str:
+    return value[:19].replace("T", " ") if value else "—"
+
+
+def _emit_memories(
+    rows: list[dict[str, Any]], *, score_key: str | None = None, single: bool = False
+) -> None:
+    """Render memories as a table, or as JSON under --json."""
+    if _state["json"]:
+        _emit_json(rows[0] if single and len(rows) == 1 else rows)
+        return
+    if not rows:
+        console.print("[dim]no memories[/dim]")
+        return
+    table = Table(show_lines=False)
+    table.add_column("ID", justify="right", style="cyan", no_wrap=True)
+    if score_key:
+        table.add_column(score_key, justify="right", style="magenta", no_wrap=True)
+    table.add_column("Content")
+    table.add_column("Source", style="dim")
+    table.add_column("Flags", style="yellow")
+    table.add_column("Created", style="dim", no_wrap=True)
+    for r in rows:
+        cells = [str(r["id"])]
+        if score_key:
+            cells.append(f"{r[score_key]:.4f}")
+        cells += [
+            _truncate(r["content"]),
+            r.get("source") or "—",
+            "orphaned" if r.get("had_deleted_project") else "",
+            _fmt_dt(r.get("created_at")),
+        ]
+        table.add_row(*cells)
+    console.print(table)
+
+
+def _emit_projects(rows: list[dict[str, Any]], *, single: bool = False) -> None:
+    """Render projects as a table, or as JSON under --json."""
+    if _state["json"]:
+        _emit_json(rows[0] if single and len(rows) == 1 else rows)
+        return
+    if not rows:
+        console.print("[dim]no projects[/dim]")
+        return
+    table = Table(show_lines=False)
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Description", style="dim")
+    table.add_column("Created", style="dim", no_wrap=True)
+    for r in rows:
+        table.add_row(
+            r["id"], r["name"], r.get("description") or "—", _fmt_dt(r.get("created_at"))
+        )
+    console.print(table)
 
 
 def _parse_json_obj(raw: str | None) -> dict[str, Any] | None:
@@ -123,7 +194,7 @@ def memory_add(
         _error(str(exc))
     except EmbeddingError as exc:
         _error(str(exc))
-    _emit(_memory_json(memory))
+    _emit_memories([_memory_json(memory)], single=True)
 
 
 @memory_app.command("get")
@@ -137,7 +208,7 @@ def memory_get(memory_id: int) -> None:
     memory = _run(_do())
     if memory is None:
         _error(f"memory {memory_id} not found")
-    _emit(_memory_json(memory))
+    _emit_memories([_memory_json(memory)], single=True)
 
 
 @memory_app.command("list")
@@ -157,7 +228,7 @@ def memory_list(
             )
 
     memories = _run(_do())
-    _emit([_memory_json(m) for m in memories])
+    _emit_memories([_memory_json(m) for m in memories])
 
 
 @memory_app.command("update")
@@ -192,7 +263,7 @@ def memory_update(
         _error(str(exc))
     if memory is None:
         _error(f"memory {memory_id} not found")
-    _emit(_memory_json(memory))
+    _emit_memories([_memory_json(memory)], single=True)
 
 
 @memory_app.command("delete")
@@ -247,7 +318,9 @@ def memory_search(
     except EmbeddingError as exc:
         _error(str(exc))
     key = _SCORE_KEY[mode]
-    _emit([{**_memory_json(m), key: score} for m, score in rows])
+    _emit_memories(
+        [{**_memory_json(m), key: score} for m, score in rows], score_key=key
+    )
 
 
 @memory_app.command("link")
@@ -297,7 +370,7 @@ def memory_projects(memory_id: int) -> None:
     projects = _run(_do())
     if projects is None:
         _error(f"memory {memory_id} not found")
-    _emit([_project_json(p) for p in projects])
+    _emit_projects([_project_json(p) for p in projects])
 
 
 # --- project commands -------------------------------------------------------
@@ -315,7 +388,7 @@ def project_add(
         async with async_session_factory() as session:
             return await crud.create_project(session, data)
 
-    _emit(_project_json(_run(_do())))
+    _emit_projects([_project_json(_run(_do()))], single=True)
 
 
 @project_app.command("list")
@@ -328,7 +401,7 @@ def project_list(
         async with async_session_factory() as session:
             return await crud.list_projects(session, limit=limit, offset=offset)
 
-    _emit([_project_json(p) for p in _run(_do())])
+    _emit_projects([_project_json(p) for p in _run(_do())])
 
 
 @project_app.command("get")
@@ -342,7 +415,7 @@ def project_get(project_id: uuid.UUID) -> None:
     project = _run(_do())
     if project is None:
         _error(f"project {project_id} not found")
-    _emit(_project_json(project))
+    _emit_projects([_project_json(project)], single=True)
 
 
 @project_app.command("delete")
